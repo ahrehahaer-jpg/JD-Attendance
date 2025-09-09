@@ -1,0 +1,164 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JD Singh Attendance Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #ffffff; }
+    h1 { text-align: center; color: #2c3e50; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #2c3e50; color: white; }
+    select, input { padding: 5px; }
+    .controls { margin: 20px 0; text-align: center; }
+    button { margin: 5px; padding: 10px 15px; cursor: pointer; }
+    .summary { margin-top: 20px; font-weight: bold; }
+    canvas { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <h1>JD Singh Attendance Tracker</h1>
+  <div class="controls">
+    <button onclick="prevMonth()">⬅ Prev</button>
+    <span id="monthYear"></span>
+    <button onclick="nextMonth()">Next ➡</button>
+    <button onclick="exportPDF()">📄 Export PDF</button>
+    <button onclick="resetMonth()">♻ Reset</button>
+  </div>
+  <table id="attendanceTable">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Day</th>
+        <th>Attendance</th>
+        <th>Income (₹)</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div class="summary" id="summary"></div>
+  <canvas id="summaryChart"></canvas>
+
+  <script>
+    const rate = 600;
+    let currentDate = new Date();
+    let records = JSON.parse(localStorage.getItem("attendanceRecords") || "{}");
+
+    function renderTable() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      document.getElementById("monthYear").innerText = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+      const tbody = document.querySelector("#attendanceTable tbody");
+      tbody.innerHTML = "";
+
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateObj = new Date(year, month, day);
+        const dateStr = dateObj.toISOString().split('T')[0];
+        const weekday = dateObj.toLocaleString('default', { weekday: 'long' });
+        if (!records[dateStr]) records[dateStr] = { attendance: weekday === "Sunday" ? "Holiday" : "", notes: "" };
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${dateStr}</td>
+          <td>${weekday}</td>
+          <td>
+            <select onchange="updateAttendance('${dateStr}', this.value)">
+              <option value="" ${records[dateStr].attendance === '' ? 'selected' : ''}></option>
+              <option value="Present" ${records[dateStr].attendance === 'Present' ? 'selected' : ''}>Present</option>
+              <option value="Half Day" ${records[dateStr].attendance === 'Half Day' ? 'selected' : ''}>Half Day</option>
+              <option value="Absent" ${records[dateStr].attendance === 'Absent' ? 'selected' : ''}>Absent</option>
+              <option value="Holiday" ${records[dateStr].attendance === 'Holiday' ? 'selected' : ''}>Holiday</option>
+            </select>
+          </td>
+          <td id="income-${dateStr}"></td>
+          <td><input type="text" value="${records[dateStr].notes}" onchange="updateNotes('${dateStr}', this.value)" /></td>
+        `;
+        tbody.appendChild(tr);
+
+        updateIncome(dateStr);
+      }
+      updateSummary();
+    }
+
+    function updateAttendance(date, value) {
+      records[date].attendance = value;
+      updateIncome(date);
+      saveRecords();
+    }
+
+    function updateNotes(date, value) {
+      records[date].notes = value;
+      saveRecords();
+    }
+
+    function updateIncome(date) {
+      let income = 0;
+      if (records[date].attendance === "Present") income = rate;
+      if (records[date].attendance === "Half Day") income = rate / 2;
+      document.getElementById(`income-${date}`).innerText = income;
+      records[date].income = income;
+    }
+
+    function updateSummary() {
+      let present = 0, half = 0, absent = 0, holiday = 0, total = 0;
+      for (let d in records) {
+        if (!d.startsWith(currentDate.toISOString().slice(0,7))) continue;
+        let rec = records[d];
+        if (rec.attendance === "Present") present++;
+        if (rec.attendance === "Half Day") half++;
+        if (rec.attendance === "Absent") absent++;
+        if (rec.attendance === "Holiday") holiday++;
+        total += rec.income || 0;
+      }
+      document.getElementById("summary").innerText = `Present: ${present}, Half Day: ${half}, Absent: ${absent}, Holiday: ${holiday}, Total Income: ₹${total}`;
+
+      renderChart(present, half, absent, holiday, total);
+    }
+
+    function renderChart(present, half, absent, holiday, total) {
+      const ctx = document.getElementById('summaryChart').getContext('2d');
+      if (window.chart) window.chart.destroy();
+      window.chart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: ['Present', 'Half Day', 'Absent', 'Holiday'],
+          datasets: [{
+            data: [present, half, absent, holiday],
+            backgroundColor: ['#27ae60','#f1c40f','#e74c3c','#95a5a6']
+          }]
+        }
+      });
+    }
+
+    function prevMonth() { currentDate.setMonth(currentDate.getMonth()-1); renderTable(); }
+    function nextMonth() { currentDate.setMonth(currentDate.getMonth()+1); renderTable(); }
+    function resetMonth() { if(confirm("Reset this month?")) { records={}; saveRecords(); renderTable(); } }
+
+    function saveRecords() { localStorage.setItem("attendanceRecords", JSON.stringify(records)); updateSummary(); }
+
+    async function exportPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      doc.text("JD Singh Attendance Report", 10, 10);
+      let y = 20;
+      for (let d in records) {
+        if (!d.startsWith(currentDate.toISOString().slice(0,7))) continue;
+        let rec = records[d];
+        doc.text(`${d} - ${rec.attendance} - ₹${rec.income || 0} - ${rec.notes}`, 10, y);
+        y += 10;
+      }
+      doc.save("Attendance_Report.pdf");
+    }
+
+    renderTable();
+  </script>
+</body>
+</html>
+```
